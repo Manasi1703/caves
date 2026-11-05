@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Marengo Cave</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+canvas{position:absolute;inset:0;width:100vw;height:100vh;cursor:crosshair}
+#h{position:fixed;left:12px;top:10px;color:#f0e2b8;font:12px/1.4 ui-monospace,monospace;text-shadow:0 1px 3px #000}
+#r{position:fixed;left:0;right:0;bottom:7%;text-align:center;color:#f0e2b8;font:15px ui-monospace,monospace;letter-spacing:.25em;text-transform:uppercase;opacity:0;transition:opacity 1.2s;text-shadow:0 2px 6px #000}
+#a{position:fixed;left:0;right:0;top:12%;text-align:center;color:#ffe2a0;font:600 20px ui-monospace,monospace;letter-spacing:.08em;text-shadow:0 2px 6px #000;opacity:0;transition:opacity .5s}
+#p{position:fixed;right:20px;top:20px;width:340px;display:none;color:#f0e2b8;font:13px/1.45 ui-monospace,monospace}
+#pm{height:240px;border:1px solid #c9a46a;border-bottom:0}
+#pt{background:rgba(12,8,4,.9);border:1px solid #c9a46a;padding:10px 14px}
+#pt h3{margin:0 0 6px;font-size:15px;letter-spacing:.1em;text-transform:uppercase;color:#ffd48a}
+#pt p{margin:0 0 6px}#pt b{color:#ffd48a}#pt small{opacity:.7}
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none}
+</style>
+<canvas id="c"></canvas>
+<div id="h">click = look · W/S walk · A/D strafe · shift run · arrows turn</div>
+<div id="r"></div>
+<div id="a"></div>
+<div id="fade"></div>
+<div id="p"><div id="pm"></div><div id="pt"><h3></h3><p id="pw"></p><p><b>How it forms.</b> <span id="ph"></span></p><p><b>How long.</b> <span id="pl"></span></p><small>Rates are typical ranges; they vary by cave and climate.</small></div></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
+import {Reflector} from 'three/addons/objects/Reflector.js';
+
+let VW=innerWidth,VH=innerHeight;const DPR=Math.min(devicePixelRatio,1.5),L=300,WATER=-1.2;
+let sd=11;
+const rnd=()=>{sd|=0;sd=sd+0x6D2B79F5|0;let t=Math.imul(sd^sd>>>15,1|sd);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const R=(a,b)=>a+rnd()*(b-a),cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+const hash=(x,y)=>{let h=Math.imul(x|0,374761393)+Math.imul(y|0,668265263);h=Math.imul(h^h>>>13,1274126177);return((h^h>>>16)>>>0)/4294967296};
+const vn=(x,y)=>{const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy,u=fx*fx*(3-2*fx),v=fy*fy*(3-2*fy),a=hash(ix,iy),b=hash(ix+1,iy),c=hash(ix,iy+1),d=hash(ix+1,iy+1);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v};
+
+/* ---------- renderer: low-res + dither = pixel look ---------- */
+const cv=document.getElementById('c');
+const rend=new THREE.WebGLRenderer({canvas:cv,antialias:false});
+rend.setPixelRatio(DPR);rend.setSize(VW,VH,false);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x030201);
+scene.fog=new THREE.FogExp2(0x0a0705,.011);
+const cam=new THREE.PerspectiveCamera(70,VW/VH,.1,110);cam.rotation.order='YXZ';
+const comp=new EffectComposer(rend,new THREE.WebGLRenderTarget(VW*DPR,VH*DPR,{type:THREE.HalfFloatType,samples:4}));
+comp.addPass(new RenderPass(scene,cam));
+comp.addPass(new OutputPass());
+
+addEventListener('resize',()=>{VW=innerWidth;VH=innerHeight;rend.setSize(VW,VH,false);comp.setSize(VW,VH);cam.aspect=VW/VH;cam.updateProjectionMatrix()});
+
+/* ---------- cave profile: wide + low ---------- */
+const knots=[[0,6,4.5],[40,12,5],[58,40,6.5],[110,40,6.5],[128,9,4.5],[170,8,4],[188,32,5.5],[240,32,5.5],[258,28,7],[300,28,7]]; // d, halfWidth, ceilingY
+const pools=[[42,112],[178,245]];
+const rooms=[[0,'Entrance Passage'],[40,'Dream Lake'],[120,'The Narrows'],[175,'Soda Straw Room'],[250,'Crystal Palace']];
+function prof(d){let k=0;while(k<knots.length-2&&knots[k+1][0]<d)k++;const a=knots[k],b=knots[k+1],u=cl((d-a[0])/(b[0]-a[0]),0,1),s=u*u*(3-2*u);return[a[1]+(b[1]-a[1])*s,a[2]+(b[2]-a[2])*s]}
+function floorL(d){let s=0;for(const[a,b]of pools){const m=Math.min(d-a,b-d)/12;if(m>0)s=Math.max(s,Math.min(m,1))}s=s*s*(3-2*s);return-.4-2.1*s}
+const noise=(th,d)=>1+(vn(Math.cos(th)*2.2+d*.35,Math.sin(th)*2.2+5)-.5)*.2+(vn(Math.cos(th)*7+d*1.2,Math.sin(th)*7)-.5)*.05;
+function surf(d,th){const[hw,c]=prof(d),fl=floorL(d),mid=(fl+c)/2,hh=(c-fl)/2,k=noise(th,d),x=Math.cos(th)*hw*k,fl2=cl(-Math.sin(th)*1.6-.15,0,1)*Math.min(1,Math.abs(x)/3); // floor relief: ripples + terraces
+  return new THREE.Vector3(x,mid+Math.sin(th)*hh*k+fl2*((vn(x*.4,d*.4)-.5)*.9+.25*Math.sin(x*.8+vn(d*.3,x*.3)*6)),-d)}
+const ceilP=(d,u)=>surf(d,Math.acos(u)),floorP=(d,u)=>surf(d,-Math.acos(u)); // u = x / halfWidth
+
+/* ---------- textures ---------- */
+function mkTex(w,h,fn,sc=1){
+  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d'),im=g.createImageData(w,h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const[r,gg,b]=fn(x*sc,y*sc),i=(y*w+x)*4;im.data[i]=r;im.data[i+1]=gg;im.data[i+2]=b;im.data[i+3]=255}
+  g.putImageData(im,0,0);
+  const t=new THREE.CanvasTexture(c);t.anisotropy=rend.capabilities.getMaxAnisotropy();t.generateMipmaps=true;t.minFilter=THREE.LinearMipmapLinearFilter;t.wrapS=t.wrapT=THREE.MirroredRepeatWrapping;t.colorSpace=THREE.SRGBColorSpace;return t;
+}
+// orange limestone: ledged strata, pitting
+const rock=mkTex(512,512,(x,y)=>{
+  const n1=vn(x*.03,y*.03),n2=vn(x*.12,y*.12),band=Math.sin(x*.09+n1*5)*.5+.5,pit=vn(x*.35,y*.35)>.72?1:0;
+  const v=cl(.45+.22*band+.25*(n2-.5)+.12*(vn(x*.9,y*.9)-.5)+.06*(vn(x*2.2,y*2.2)-.5)-.22*pit,0,1);
+  return[110+v*120,70+v*80,40+v*50];
+},.5);
+// cream calcite: fine vertical flow ribs
+const calc=mkTex(256,512,(x,y)=>{
+  const n=vn(x*.05,y*.05),rib=Math.sin(x*Math.PI*2/128*14+n*3)*.5+.5,band=Math.sin(y*.07+n*6)*.5+.5,v=cl(.5+.28*rib+.12*band+(vn(x*1.3,y*1.3)-.5)*.1+(vn(x*3,y*3)-.5)*.05,0,1);
+  return[170+v*80,140+v*85,100+v*80];
+},.5);
+
+/* ---------- cave shell ---------- */
+{
+  const N=500,M=64,C=M+1,pos=[],col=[],uv=[],idx=[];
+  for(let i=0;i<=N;i++){
+    const d=i*L/N,[hw,c]=prof(d),per=Math.PI*2*Math.sqrt((hw*hw+((c-floorL(d))/2)**2)/2);
+    for(let j=0;j<=M;j++){
+      const th=j/M*Math.PI*2,p=surf(d,th),t=cl(.25+.6*vn(Math.cos(th)*3+d*.2,Math.sin(th)*3),0,1);
+      const f=cl(-Math.sin(th)*1.6-.15,0,1)*.85,w=.75+.5*vn(Math.cos(th)*5+d*.5,Math.sin(th)*5); // floor = pale flowstone
+      pos.push(p.x,p.y,p.z);col.push((.6+.5*t)*(1-f)+1.15*w*f,(.55+.45*t)*(1-f)+1.0*w*f,(.5+.4*t)*(1-f)+.78*w*f);uv.push(j/M*per/7,d/7);
+    }
+  }
+  for(let i=0;i<N;i++)for(let j=0;j<M;j++){const a=i*C+j,b=a+1,c=a+C,e=c+1;idx.push(a,c,b,b,c,e)}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({map:rock,bumpMap:rock,bumpScale:5,vertexColors:true,roughness:1,side:THREE.DoubleSide})));
+}
+
+/* ---------- formations (instanced) ---------- */
+const lime=new THREE.MeshStandardMaterial({map:calc,bumpMap:calc,bumpScale:3,emissive:0x241a0e,roughness:.5});
+const limeS=lime.clone();limeS.color.set(0xffe4b8);limeS.emissive.set(0x7a5028);limeS.emissiveMap=calc;limeS.bumpScale=1;limeS.roughness=.8;limeS.side=THREE.DoubleSide;
+const white=new THREE.MeshStandardMaterial({color:0xf2e4c4,emissive:0x4a3c24,roughness:.5});
+function inst(geo,mat,items){
+  const g={};items.forEach(it=>(g[Math.floor(-it.p.z/40)]??=[]).push(it));
+  Object.values(g).forEach(a=>mkInst(geo,mat,a));
+}
+function mkInst(geo,mat,items){
+  const m=new THREE.InstancedMesh(geo,mat,items.length),o=new THREE.Object3D(),c=new THREE.Color();
+  items.forEach((it,i)=>{o.position.copy(it.p);o.rotation.set(0,it.ry??rnd()*6.28,0);o.scale.set(it.sx,it.sy,it.sz??it.sx);o.updateMatrix();m.setMatrixAt(i,o.matrix);m.setColorAt(i,c.setScalar(it.c??R(.75,1.1)))});
+  scene.add(m);return m;
+}
+const facet=g=>{const p=g.attributes.position;for(let i=0;i<p.count;i++){const k=1+(vn(p.getX(i)*6+p.getY(i)*3,p.getZ(i)*6+p.getY(i)*9)-.5)*.35;p.setX(i,p.getX(i)*k);p.setZ(i,p.getZ(i)*k)}return g};
+// lumpy flowstone: drip-lipped lathe with popcorn noise
+const lumpy=(prof,seg,amp,seed=0,step=.008)=>{
+  const pts=[];for(let i=0,n=Math.round(1/step);i<=n;i++){const y=i/n;pts.push(new THREE.Vector2(Math.max(.02,prof(y)),y))}
+  const g=new THREE.LatheGeometry(pts,seg),p=g.attributes.position;
+  for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i),k=1+(vn(x*2.5+z*2.5+seed*17,y*9+z+seed*5)-.5)*amp+(vn(x*9+z*9,y*30+z*9)-.5)*amp*.35;p.setX(i,x*k);p.setZ(i,z*k)}
+  g.computeVertexNormals();return g;
+};
+const geosD=[0,1,2,3].map(i=>lumpy(y=>.1+.9*Math.pow(1-y,.85)+.05*Math.sin(y*(18+i*5))*(1-y),10,.45,i,.07).rotateX(Math.PI)); // base at origin, tip down
+const geosU=[0,1,2,3].map(i=>lumpy(y=>.12+.88*Math.pow(1-y,.8)+.06*Math.sin(y*(16+i*6))*(1-y),10,.45,i+4,.07));            // base at origin, blunt tip up
+const instV=(geos,mat,items)=>geos.forEach((g,i)=>inst(g,mat,items.filter((_,k)=>k%geos.length===i)));
+const geoBox=new THREE.BoxGeometry(1,1,1);
+const geoSheet=new THREE.BoxGeometry(1,1,1).translate(0,-.5,0);
+const geoStraw=new THREE.CylinderGeometry(1,1,1,4).translate(0,-.5,0);
+const geoCol=lumpy(y=>.7+.3*Math.pow(Math.abs(2*y-1),1.5)+.04*Math.sin(y*45),20,.3);
+const up=(p,y)=>p.clone().add(new THREE.Vector3(0,y,0));
+const inStraw=d=>d>180&&d<245;
+
+// stalactites: dense small ones + a few big ones; stalagmites + tall candle stalagmites
+{
+  const a=[],b=[];
+  for(let n=0;n<3200;n++){
+    const d=R(4,L-4),len=R(.2,1.3);
+    if(inStraw(d)&&rnd()<.6)continue;
+    a.push({p:up(ceilP(d,R(-.93,.93)),.3),sx:len*R(.1,.2)+.05,sy:len});
+  }
+  for(let n=0;n<120;n++){const len=R(1,2.8);a.push({p:up(ceilP(R(4,L-4),R(-.93,.93)),.3),sx:len*R(.1,.16)+.1,sy:len})}
+  for(let n=0;n<1000;n++){
+    const d=R(4,L-4),p=floorP(d,R(-.93,.93));
+    if(Math.abs(p.x)<1.6)continue;
+    const len=R(.3,1.5);b.push({p:up(p,-.2),sx:len*R(.12,.2)+.08,sy:len});
+  }
+  for(let n=0;n<90;n++){
+    const d=R(4,L-4),p=floorP(d,R(-.93,.93));
+    if(Math.abs(p.x)<1.6)continue;
+    const len=R(2,4.5);b.push({p:up(p,-.3),sx:R(.1,.3),sy:len,c:1.15});
+  }
+  instV(geosD,lime,a);instV(geosU,lime,b);
+}
+// soda straws: dense field everywhere, long ones over the straw pool
+{
+  const s=[];
+  for(let n=0;n<7000;n++){
+    const d=R(4,L-4),u=R(-.93,.93);
+    if(vn(d*.12,u*2.5)<.5)continue; // patchy clusters, bare ceiling between
+    const p=ceilP(d,u),len=inStraw(d)?R(.5,3.4):R(.2,1.4)*(.6+vn(d*.3,u*4));
+    s.push({p:up(p,.25),sx:.025,sy:len,c:1});
+  }
+  inst(geoStraw,white,s);
+  const w=[];
+  for(let i=0;i<40;i++){const d=R(190,235),p=floorP(d,R(-.75,.75));if(Math.abs(p.x)>1.5)w.push({p:up(p,-.2),sx:R(.12,.3),sy:R(2,4.2),c:1.2})}
+  instV(geosU,white,w);
+}
+// drapery curtains on walls / ceiling
+function drapery(d0,d1,u,Lmax,seed){
+  const pos=[],uv=[],col=[],idx=[],S=Math.round((d1-d0)/.15),Rr=14;
+  for(let i=0;i<=S;i++){
+    const d=d0+i*(d1-d0)/S,t=i/S,len=Math.max(.15,Lmax*Math.pow(Math.sin(t*Math.PI),.6)*(.3+.7*Math.pow(Math.abs(Math.sin((d-d0)*.55+hash(seed,Math.floor(d))*3)),.8))),top=up(ceilP(d,u),.3);
+    for(let j=0;j<=Rr;j++){const f=j/Rr,fold=Math.sin(d*2.3+seed)*.18*(.4+f)+Math.sin(d*5.1+seed*2)*.05;pos.push(top.x+fold,top.y-f*len,top.z);uv.push(d*.6,f*len*.5);const k=(.5+.5*f**.7)*(.8+.2*Math.sin(d*7+seed)),rim=f>.93?1.25:1;col.push(k*rim,k*.92*rim,k*.78*rim)}
+  }
+  for(let i=0;i<S;i++)for(let j=0;j<Rr;j++){const a=i*(Rr+1)+j,b=a+1,c=a+Rr+1,e=c+1;idx.push(a,b,c,b,e,c)}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));g.setIndex(idx);g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({map:calc,bumpMap:calc,bumpScale:3,side:THREE.DoubleSide,vertexColors:true,emissive:0x1c1408,roughness:.5})));
+}
+drapery(60,84,-.8,4.5,1);drapery(70,98,.82,4,2);drapery(90,108,-.9,4.5,3);drapery(135,152,-.7,3,4);
+drapery(262,285,-.85,5.5,5);drapery(268,296,.8,5.5,6);drapery(275,292,0,3.2,7);drapery(195,215,.85,4,8);
+// breakdown boulders on the banks
+{
+  const g=new THREE.IcosahedronGeometry(1,1),q=g.attributes.position;
+  for(let i=0;i<q.count;i++){const k=1+(vn(q.getX(i)*2+q.getZ(i),q.getY(i)*2)-.5)*.6;q.setXYZ(i,q.getX(i)*k,q.getY(i)*k*.7,q.getZ(i)*k)}
+  g.computeVertexNormals();
+  const items=[];
+  for(let n=0;n<450;n++){
+    const d=R(6,L-6),p=floorP(d,R(-.93,.93)*(rnd()<.7?1:.5));
+    if(Math.abs(p.x)<1.6||p.y<WATER+.2)continue;
+    const r=R(.15,.9);items.push({p:up(p,r*.1),sx:r,sy:r,sz:r*R(.7,1.2),c:R(.6,1)});
+  }
+  inst(g,new THREE.MeshStandardMaterial({map:rock,bumpMap:rock,bumpScale:4,roughness:1,color:0xd8c4a8}),items);
+}
+// cave popcorn clusters on banks
+{
+  const items=[];
+  for(let n=0;n<70;n++){
+    const d=R(6,L-6),sg=rnd()<.5?-1:1,p=floorP(d,sg*R(.75,.93));
+    if(d>180&&d<245&&p.y<WATER)continue;
+    for(let k=0;k<26;k++)items.push({p:p.clone().add(new THREE.Vector3(R(-1.2,1.2),R(-.05,.15),R(-1.2,1.2))),sx:R(.05,.18),sy:R(.05,.16),c:R(.85,1.15)});
+  }
+  const g=new THREE.IcosahedronGeometry(1,1),q=g.attributes.position;
+  for(let i=0;i<q.count;i++){const k=1+(vn(q.getX(i)*3,q.getY(i)*3+q.getZ(i)*3)-.5)*.5;q.setXYZ(i,q.getX(i)*k,q.getY(i)*k,q.getZ(i)*k)}
+  g.computeVertexNormals();inst(g,limeS,items);
+}
+// rimstone dams: stepped curved lips beside the pools
+{
+  const items=[],g=new THREE.TorusGeometry(1,.1,8,28,Math.PI).rotateX(-Math.PI/2);
+  for(const[d,sg]of[[50,-1],[66,1],[100,-1],[190,1],[226,-1],[238,1]])
+    for(let i=0;i<5;i++){const p=floorP(d,sg*(.84-i*.03));items.push({p:up(p,.05),sx:2.2+i*.4,sy:1.6,sz:2.2+i*.4,ry:sg>0?Math.PI/2:-Math.PI/2,c:1.05})}
+  inst(g,limeS,items);
+}
+// helictites: small twisted tubes
+{
+  const hel=[];
+  for(let n=0;n<260;n++){
+    const p0=ceilP(R(4,L-4),R(-.9,.9)),pts=[p0.clone()],dir=new THREE.Vector3(R(-.5,.5),-1,R(-.5,.5)).normalize();let q=p0.clone();
+    for(let k=0;k<6;k++){dir.add(new THREE.Vector3(R(-.8,.8),R(-.5,.5),R(-.8,.8))).normalize();q=q.clone().addScaledVector(dir,R(.08,.18));pts.push(q)}
+    hel.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),16,R(.012,.03),5));
+  }
+  scene.add(new THREE.Mesh(mergeGeometries(hel),white));
+}
+// massive columns
+for(const[d,u]of[[62,-.6],[70,.5],[80,-.35],[90,.7],[98,-.7],[106,.45],[140,.4],[155,-.5],[165,.35],[195,-.6],[205,.55],[220,-.4],[232,.7],[270,-.5],[285,.55]]){
+  const t=ceilP(d,u),b=floorP(d,u),w=R(.5,1);
+  inst(geoCol,limeS,[{p:new THREE.Vector3((t.x+b.x)/2,b.y-.3,-d),sx:w,sy:t.y-b.y+.6,sz:w,c:1}]);
+}
+
+// formations in the middle of the pools
+{
+  const st=[];
+  for(const[a,b]of pools){
+    for(let n=0;n<70;n++){const p=floorP(R(a+8,b-8),R(-.7,.7));if(Math.abs(p.x)>1.8)st.push({p:up(p,-.2),sx:R(.12,.4),sy:R(3.2,6.2),c:R(1,1.2)})}
+    for(let n=0;n<5;n++){const d=R(a+10,b-10),u=R(-.6,.6),t=ceilP(d,u),bt=floorP(d,u);if(Math.abs(t.x)>2.5)inst(geoCol,limeS,[{p:new THREE.Vector3(t.x,bt.y-.3,-d),sx:R(.5,.9),sy:t.y-bt.y+.6,c:1}])}
+  }
+  instV(geosU,lime,st);
+}
+
+/* ---------- guided highlights ---------- */
+const drapeMat=new THREE.MeshStandardMaterial({map:calc,bumpMap:calc,bumpScale:3,side:THREE.DoubleSide,vertexColors:true,emissive:0x1c1408,roughness:.5});
+function drapeLocal(w,len,seed){
+  const pos=[],uv=[],col=[],idx=[],S=40,Rr=14;
+  for(let i=0;i<=S;i++){
+    const t=i/S,x=(t-.5)*w,ln=len*Math.pow(Math.sin(t*Math.PI),.5)*(.35+.65*Math.abs(Math.sin(t*9+seed)));
+    for(let j=0;j<=Rr;j++){const f=j/Rr,fold=Math.sin(x*2.3+seed)*.2*(.4+f)+Math.sin(x*5.1)*.05,k=(.5+.5*f**.7)*(.8+.2*Math.sin(x*7)),rim=f>.93?1.25:1;pos.push(x,-f*ln,fold);uv.push(x*.6,f*ln*.5);col.push(k*rim,k*.92*rim,k*.78*rim)}
+  }
+  for(let i=0;i<S;i++)for(let j=0;j<Rr;j++){const a=i*(Rr+1)+j,b=a+1,c=a+Rr+1,e=c+1;idx.push(a,b,c,b,e,c)}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));g.setIndex(idx);g.computeVertexNormals();return g;
+}
+const strawG=new THREE.CylinderGeometry(1,.8,1,5).translate(0,-.5,0),popG=new THREE.IcosahedronGeometry(1,1),rimG=new THREE.TorusGeometry(1,.18,8,28,Math.PI).rotateX(-Math.PI/2);
+function build(kind,m){ // floor kinds: base at y=0; ceiling kinds: attach point at y=0, hangs down
+  const g=new THREE.Group(),add=(geo,mat,sc,pos=[0,0,0])=>{const o=new THREE.Mesh(geo,mat);o.scale.set(...sc);o.position.set(...pos);g.add(o)};
+  if(kind==='stalactite')add(geosD[1],m.lime,[.55,3.2,.55]);
+  else if(kind==='stalagmite')add(geosU[0],m.lime,[.5,5.5,.5]);
+  else if(kind==='drapery')add(drapeLocal(5,3.2,3),m.dr,[1,1,1]);
+  else if(kind==='column')add(geoCol,m.limeS,[.9,6,.9]);
+  else if(kind==='straws')for(let i=0;i<90;i++)add(strawG,m.white,[.035,R(.6,2.4),.035],[R(-1,1),0,R(-1,1)]);
+  else if(kind==='popcorn')for(let i=0;i<70;i++){const r=R(.07,.2);add(popG,m.limeS,[r,r*.85,r],[R(-.9,.9),r*.6,R(-.9,.9)])}
+  else if(kind==='helictites')for(let i=0;i<14;i++){const pts=[new THREE.Vector3(R(-.6,.6),0,R(-.6,.6))],dir=new THREE.Vector3(R(-.4,.4),-1,R(-.4,.4)).normalize();let q=pts[0].clone();for(let k=0;k<6;k++){dir.add(new THREE.Vector3(R(-.8,.8),R(-.5,.5),R(-.8,.8))).normalize();q=q.clone().addScaledVector(dir,R(.12,.3));pts.push(q)}add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),20,R(.02,.045),6),m.white,[1,1,1])}
+  else if(kind==='rimstone')for(let i=0;i<5;i++)add(rimG,m.limeS,[1.4+i*.35,1.2,1.4+i*.35],[0,-i*.2,-i*.9]);
+  return g;
+}
+const FEATS=[
+ {d:24,x:-2.2,kind:'stalactite',ceil:1,look:'up',name:'Stalactite',what:'A cone of calcite hanging from the ceiling.',how:'It starts as a soda straw. When the straw clogs, water runs down the outside and adds layer after layer.',time:'Roughly 0.1 to 0.3 mm a year: an inch takes about 100 to 250 years, and a big one tens of thousands.'},
+ {d:52,x:-6,kind:'drapery',ceil:1,look:'to the left',name:'Drapery',what:'A thin, folded sheet of calcite hanging like a curtain.',how:'Water trickling down a sloping ceiling deposits calcite along a line, so the sheet grows downward. Iron and other minerals paint the bands.',time:'Slow, around 0.1 mm a year, so a curtain this size is likely tens of thousands of years old.'},
+ {d:78,x:4,kind:'stalagmite',look:'to the right',name:'Stalagmite',what:'A blunt candle of calcite rising from the floor.',how:'Drops falling from above splash and lose carbon dioxide, leaving calcite where they land.',time:'About 0.1 mm a year, so a tall one like this takes many thousands of years.'},
+ {d:146,x:-3.2,kind:'column',look:'to the left',name:'Column',what:'A stalactite and a stalagmite that have grown together.',how:'They grow toward each other until the gap closes, then keep thickening.',time:'Typically tens of thousands of years, since both halves have to meet.'},
+ {d:165,x:4,kind:'popcorn',look:'down to the right',name:'Cave popcorn',what:'Knobby nodules of calcite, also called cave coral.',how:'Thin films of water seep out and evaporate on the surface, leaving small bumps of calcite.',time:'Very slow: likely thousands of years for a cluster this size.'},
+ {d:204,x:1.5,kind:'straws',ceil:1,look:'up',name:'Soda straws',what:'Hollow calcite tubes about as wide as a drinking straw.',how:'Each drop hanging from the ceiling leaves a ring of calcite where it clings, then falls. The rings stack into a tube.',time:'About 0.13 mm a year on average: roughly an inch per 200 years.'},
+ {d:236,x:-5,kind:'helictites',ceil:1,look:'up to the left',name:'Helictites',what:'Small twisted formations that seem to ignore gravity.',how:'Water is pushed through a hair-thin central canal by capillary force, so the growth direction is erratic.',time:'Among the slowest formations, well under a millimetre a year.'},
+ {d:266,x:5,kind:'rimstone',look:'down to the right',name:'Rimstone dam',what:'A natural curved dam at the edge of a pool.',how:'Water tumbling over a lip loses carbon dioxide there, so calcite builds the rim higher.',time:'Faster than most: visible growth in decades to centuries when water flows steadily.'},
+];
+const plain={lime,limeS,white,dr:drapeMat};
+const haloTex=(()=>{const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d'),r=g.createRadialGradient(64,64,0,64,64,64);r.addColorStop(0,'rgba(255,190,90,.85)');r.addColorStop(.4,'rgba(255,150,50,.35)');r.addColorStop(1,'rgba(255,120,30,0)');g.fillStyle=r;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})();
+FEATS.forEach(f=>{
+  const hw=prof(f.d)[0],p=(f.ceil?ceilP:floorP)(f.d,cl(f.x/hw,-.95,.95));
+  f.mats=[];
+  const gm=(m,c=0xffb050)=>{const x=m.clone();x.emissive=new THREE.Color(c);x.emissiveMap=null;f.mats.push(x);return x};
+  f.obj=build(f.kind,{lime:gm(lime),limeS:gm(limeS),white:gm(white,0xffe0a0),dr:gm(drapeMat)});
+  f.obj.position.copy(up(p,f.ceil?.3:-.2));scene.add(f.obj);
+  f.pos=up(p,f.ceil?-1.6:2);f.seen=false;
+  f.halo=new THREE.Sprite(new THREE.SpriteMaterial({map:haloTex,blending:THREE.AdditiveBlending,depthWrite:false,transparent:true,fog:false}));
+  f.halo.scale.setScalar(Math.max(7,(f.kind==='column'||f.kind==='stalagmite')?10:7));f.halo.position.copy(f.pos);scene.add(f.halo);
+});
+// panel: second scene drawn into a scissored viewport
+const mini=new THREE.Scene();mini.background=new THREE.Color(0x120c08);
+mini.add(new THREE.AmbientLight(0xffffff,1.1));
+const dl=new THREE.DirectionalLight(0xffd8a0,2.4);dl.position.set(3,4,5);mini.add(dl);
+const dl2=new THREE.DirectionalLight(0x8899aa,.7);dl2.position.set(-4,1,-3);mini.add(dl2);
+const miniCam=new THREE.PerspectiveCamera(40,4/3,.1,50);miniCam.position.set(0,.3,6.5);miniCam.lookAt(0,0,0);
+let miniKey=null,miniSpin=null;
+function showMini(f){
+  if(miniSpin)mini.remove(miniSpin);
+  const g=build(f.kind,plain),box=new THREE.Box3().setFromObject(g),c=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3()),k=3.4/Math.max(sz.x,sz.y,sz.z);
+  g.position.sub(c);const w=new THREE.Group();w.add(g);w.scale.setScalar(k);miniSpin=new THREE.Group();miniSpin.add(w);mini.add(miniSpin);miniKey=f;
+  document.querySelector('#pt h3').textContent=f.name;pw.textContent=f.what;ph.textContent=f.how;pl.textContent=f.time;
+}
+const $a=document.getElementById('a'),$p=document.getElementById('p'),$pm=document.getElementById('pm');
+const v1=new THREE.Vector3(),fwd=new THREE.Vector3();
+function highlights(t,dt,pd){
+  cam.getWorldDirection(fwd);
+  const turned=fwd.z>-.955,open=$p.style.display==='block';
+  let focus=null,best=9,near=null,nd=99;
+  for(const f of FEATS){
+    v1.copy(f.pos).sub(cam.position);const dist=v1.length(),ang=Math.acos(cl(v1.normalize().dot(fwd),-1,1));
+    const pulse=.5+.5*Math.sin(t*2.5);f.mats.forEach(m=>{m.emissiveIntensity=f.seen?.12:1.1+.7*pulse});f.halo.material.opacity=f.seen?.08:.35+.45*pulse;
+    const abeam=f===miniKey&&open?(f.d-pd<20&&pd-f.d<14):(f.d-pd<16&&pd-f.d<10);
+    if(abeam&&dist<(open?36:28)&&turned&&ang<(f===miniKey&&open?.65:.36)&&ang<best){best=ang;focus=f}
+    if(!f.seen&&f.d-pd<30&&pd-f.d<8&&dist<nd){nd=dist;near=f}
+  }
+  if(focus){focus.seen=true;if(miniKey!==focus)showMini(focus);$p.style.display='block'}else $p.style.display='none';
+  if(near&&!focus){$a.textContent='Look '+near.look+' for '+near.name;$a.style.opacity=1}else $a.style.opacity=0;
+  if(focus){
+    const r=$pm.getBoundingClientRect();miniSpin.rotation.y+=dt*.9;miniCam.aspect=r.width/r.height;miniCam.updateProjectionMatrix();
+    rend.setScissorTest(true);rend.setViewport(r.left,innerHeight-r.bottom,r.width,r.height);rend.setScissor(r.left,innerHeight-r.bottom,r.width,r.height);
+    rend.render(mini,miniCam);rend.setScissorTest(false);rend.setViewport(0,0,innerWidth,innerHeight);
+  }
+}
+
+/* ---------- boardwalk + rail + pools ---------- */
+{
+  const wood=new THREE.MeshStandardMaterial({color:0x7a5532,roughness:1}),steel=new THREE.MeshStandardMaterial({color:0x55555e,roughness:.6});
+  const pl=[],po=[],rp=[];
+  for(let d=1;d<L-1;d+=.3)pl.push({p:new THREE.Vector3(0,-.04,-d),sx:1.6,sy:.08,sz:.22,ry:0,c:R(.8,1.1)});
+  for(let d=2;d<L-1;d+=3){
+    const h=-floorL(d)+.1;
+    for(const x of[-.7,.7])po.push({p:new THREE.Vector3(x,-h/2,-d),sx:.12,sy:h,sz:.12,ry:0,c:1});
+    for(const x of[-.78,.78])rp.push({p:new THREE.Vector3(x,.5,-d),sx:.08,sy:1,sz:.08,ry:0,c:1});
+  }
+  inst(geoBox,wood,pl);inst(geoBox,wood,po);inst(geoBox,steel,rp);
+  for(const x of[-.78,.78])for(const y of[1,.55]){const r=new THREE.Mesh(geoBox,steel);r.scale.set(.05,.05,L);r.position.set(x,y,-L/2);scene.add(r)}
+  for(const[a,b]of pools){
+    const w=new Reflector(new THREE.PlaneGeometry(90,b-a),{textureWidth:VW>>1,textureHeight:VH>>1,color:0x7fa4b0,clipBias:.003});
+    w.rotation.x=-Math.PI/2;w.position.set(0,WATER,-(a+b)/2);scene.add(w);
+  }
+}
+
+/* ---------- lights ---------- */
+scene.add(new THREE.AmbientLight(0x4a3828,2.2));
+for(let d=10,s=1;d<L;d+=27,s=-s){
+  const u=s*R(.35,.7),[hw]=prof(d),fy=Math.max(floorP(d,Math.abs(u)).y,WATER)+.7,l=new THREE.PointLight(inStraw(d)?0xcfe4ff:0xffb878,70,46,1.4);
+  l.position.set(u*hw,fy,-d);scene.add(l);
+}
+const cap=new THREE.Mesh(new THREE.PlaneGeometry(120,40),new THREE.MeshStandardMaterial({map:rock,color:0x998877,roughness:1}));
+cap.position.set(0,3,-L);scene.add(cap);
+const lantern=new THREE.PointLight(0xffc880,14,18,1.5);scene.add(lantern);
+
+/* ---------- controls ---------- */
+const H0=location.hash.slice(1).split(',');
+const K={};let yaw=+H0[2]||0,pitch=+H0[1]||0,bob=0,room=-1;
+const P={x:0,z:-(+H0[0]||3)};
+addEventListener('keydown',e=>K[e.key.toLowerCase()]=1);
+addEventListener('keyup',e=>K[e.key.toLowerCase()]=0);
+cv.addEventListener('click',()=>cv.requestPointerLock());
+addEventListener('mousemove',e=>{if(document.pointerLockElement){yaw-=e.movementX*.0025;pitch=cl(pitch-e.movementY*.0025,-1.2,1.2)}});
+const rEl=document.getElementById('r');
+let last=0;
+function loop(ts){
+  const t=ts/1000,dt=Math.min(.05,t-last);last=t;
+  const fw=(K.w||K.arrowup?1:0)-(K.s||K.arrowdown?1:0),st=(K.d?1:0)-(K.a?1:0);
+  yaw+=((K.arrowleft?1:0)-(K.arrowright?1:0))*1.5*dt;
+  const sp=(K.shift?5:2.4)*dt;
+  P.x=cl(P.x+(-Math.sin(yaw)*fw+Math.cos(yaw)*st)*sp,-.7,.7);
+  P.z=cl(P.z+(-Math.cos(yaw)*fw-Math.sin(yaw)*st)*sp,-(L-3),-2);
+  if(fw||st)bob+=dt*(K.shift?11:7);
+  draw(t,dt);
+  requestAnimationFrame(loop);
+}
+function draw(t,dt){
+  cam.position.set(P.x,1.65+Math.sin(bob)*.04,P.z);cam.rotation.set(pitch,yaw,0);
+  lantern.position.set(P.x+Math.cos(yaw)*.4,1.3,P.z-Math.sin(yaw)*.4);
+  lantern.intensity=14+Math.sin(t*9)*.3+Math.random()*.2;
+  const d=-P.z;let ri=0;for(let i=0;i<rooms.length;i++)if(d>=rooms[i][0])ri=i;
+  if(ri!==room){room=ri;rEl.textContent=rooms[ri][1];rEl.style.opacity=1;setTimeout(()=>rEl.style.opacity=0,3000)}
+  comp.render();
+  highlights(t,dt,-P.z);
+}
+const TOUR=location.search.includes('tour');
+if(!TOUR)requestAnimationFrame(loop);
+
+/* ---------- scripted 30 s tour (?tour): window.__frame(t) renders one frame ---------- */
+if(TOUR){
+  document.getElementById('h').style.display='none';
+  const ease=x=>x<0?0:x>1?1:x*x*(3-2*x),fadeEl=document.getElementById('fade');
+  let prev=0;
+  window.__frame=t=>{
+    const seg=(a,b)=>ease((t-a)/(b-a)),dt=Math.max(.001,t-prev);prev=t;
+    let d,k;
+    if(t<10.4){d=3+16.5*cl(t/4.5,0,1);k=seg(4.5,5.5)-seg(9,9.8);yaw=.5*k;pitch=.27*k}
+    else if(t<19.6){d=62+12*cl((t-10.4)/2.6,0,1);k=seg(13,14)-seg(17.8,18.6);yaw=-.79*k;pitch=-.36*k}
+    else{d=190+10*cl((t-19.6)/2.4,0,1);k=seg(22,23)-seg(28,28.7);yaw=-.36*k;pitch=.5*k}
+    const walking=(t<4.5)||(t>10.4&&t<13)||(t>19.6&&t<22);
+    if(walking)bob=t*7;
+    P.x=0;P.z=-d;
+    fadeEl.style.opacity=Math.max(1-seg(0,.8),seg(9.6,10.4)*(1-seg(10.4,11)),seg(18.8,19.6)*(1-seg(19.6,20.2)),seg(28.6,30));
+    draw(t,dt);
+  };
+  window.__ready=true;
+}
+</script>
